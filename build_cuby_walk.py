@@ -1,21 +1,34 @@
 import json
 
-# Walking code with the Hardware Timer Asynchronous Hack
-walking_code = """import time, math, rc_module
+# ==========================================
+# V1.11: THE MONOLITHIC TIMER (Auto-Boot Engine)
+# ==========================================
+walking_code = """import time, math, rc_module, machine
 from bbl.servos import ServosController
+from bbl.leds import LEDController
 from machine import Timer
 
-# Phase 2: Hardware Timer Hack
-# We cannot use an infinite loop because the firmware kills the thread on duplicate button presses.
-# So we use a background Hardware Timer! This Python script just acts as a "Launcher".
+# Ensure we have a clean RTC mailbox on boot
+try:
+    if machine.RTC().memory() != b'led_next':
+        machine.RTC().memory(b'')
+except:
+    machine.RTC().memory(b'')
+
 if not hasattr(ServosController, 'cuby_engine'):
     ServosController.cuby_engine = True
     
-    # Initialize and persist hardware controllers to survive Garbage Collection when thread dies
+    # Initialize all hardware here. 
+    # Timer now has TOTAL MONOPOLY over the I2C bus!
     ServosController.s = ServosController()
+    ServosController.lc = LEDController("LED1")
     rc_module.rc_slave_init()
     
-    # Persist state
+    # Init LED
+    ServosController.led_colors = [0x00FF00, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF]
+    ServosController.led_idx = 0
+    ServosController.lc.set_led_effect(0, 500, 255, 1, ServosController.led_colors[0]) # Start Green
+    
     ServosController.phase = 0.0
     ServosController.last_t = time.ticks_ms()
     ServosController.timer = Timer(-1)
@@ -40,10 +53,19 @@ if not hasattr(ServosController, 'cuby_engine'):
     
     def update_gait(t):
         try:
+            # 1. Check RTC Mailbox for LED Button Presses
+            if machine.RTC().memory() == b'led_next':
+                machine.RTC().memory(b'') # Clear mailbox
+                ServosController.led_idx = (ServosController.led_idx + 1) % len(ServosController.led_colors)
+                ServosController.lc.set_led_effect(0, 500, 255, 1, ServosController.led_colors[ServosController.led_idx])
+                
+            # 2. Read Remote Data
             d=rc_module.rc_slave_data()
             if d is None:
                 stand()
                 return
+                
+            # 3. Calculate Gait
             ly,lx,rx,ry=d[2],d[1],d[4],d[5]
             cur_t=time.ticks_ms()
             dt=time.ticks_diff(cur_t,ServosController.last_t)/1000.0
@@ -80,15 +102,22 @@ if not hasattr(ServosController, 'cuby_engine'):
                 elif ry<1848:
                     lh-=20*D_LH;rh-=20*D_RH
                 set_a(L_A,la);set_a(L_H,lh);set_a(R_A,ra);set_a(R_H,rh)
+                
             if hasattr(ServosController.s,'timing_proc'):
                 ServosController.s.timing_proc()
+                
         except Exception as e:
-            pass # Suppress timer callback errors to prevent hard crash
+            pass # Suppress all errors to protect background timer
             
-    # Start the hardware timer to run forever in the background at 50Hz (20ms)
+    # Launch Timer!
     ServosController.timer.init(period=20, mode=Timer.PERIODIC, callback=update_gait)
-    
-# Script ends here. Thread dies naturally. Timer continues forever!
+"""
+
+# ==========================================
+# V1.11: THE LED RTC MESSENGER
+# ==========================================
+led_code = """import machine
+machine.RTC().memory(b'led_next')
 """
 
 with open('c:/Users/mott_/OneDrive/Documents/CyberBrick/Cuby/CUBY_baseline.json', 'r') as f:
@@ -98,44 +127,46 @@ for channel in data['sender']['channels']:
     if channel.get('device') == 'joystick' and 'controls' in channel:
         channel['controls'] = []
     
-    # Restore the seamless single-button experience (LEDs + Engine)
+    # 1. Auto-Boot Trigger: ANY Joystick movement fires CODE 1!
+    if channel.get('name') in ['L Stick', 'R Stick']:
+        channel['event'] = [
+            {"actuator": "CODE", "receiver": 1, "set_value": [1], "type": "gt_mid"},
+            {"actuator": "CODE", "receiver": 1, "set_value": [1], "type": "lt_mid"}
+        ]
+        
+    # 2. LED Button: Fires CODE 2 (RTC Messenger) instead of native I2C
     if channel.get('name') == 'L Shoulder Button':
         channel['event'] = [
-            {
-                "actuator": "LED1",
-                "receiver": 1,
-                "set_value": [1, 3, 4, 5, 2],
-                "type": "down"
-            },
-            {
-                "actuator": "CODE",
-                "receiver": 1,
-                "set_value": [1, 1, 1, 1, 1], # Safe to trigger repeatedly now!
-                "type": "down"
-            }
+            {"actuator": "CODE", "receiver": 1, "set_value": [2], "type": "down"}
         ]
 
-    # Remove the 3-Pos switch mapping
+    # Remove 3-Pos switch mappings entirely
     if channel.get('name') == 'L Shoulder 3-Pos':
         channel['event'] = []
 
+# Map CODE 1 and CODE 2 into the receiver block
 data['receiver_1']['CODE'] = {
     "data": [
         {
             "code": walking_code,
             "effect": 1,
-            "effect_name": "Code  1"
+            "effect_name": "Monolithic_Timer"
+        },
+        {
+            "code": led_code,
+            "effect": 2,
+            "effect_name": "RTC_Messenger"
         }
     ],
     "en": True,
     "name": "CODE"
 }
 
-data['config_name'] = "CUBY_V1.10_HardwareTimer"
+data['config_name'] = "CUBY_V1.11_ZeroClick_Monolith"
 
 with open('c:/Users/mott_/OneDrive/Documents/CyberBrick/Cuby/CUBY_walk_turn.json', 'w') as f:
     json.dump(data, f, separators=(',', ':'))
 
-print("Generated CUBY_walk_turn.json with V1.10 Hardware Timer Hack!")
+print("Generated CUBY_walk_turn.json with V1.11 Monolithic Timer Hack!")
 
 
