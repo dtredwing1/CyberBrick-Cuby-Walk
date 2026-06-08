@@ -1,0 +1,208 @@
+# CUBY Robot Controller - Walk & Turn Custom Program
+# Hardware: Bambu Lab CyberBrick Multi-Function Core Board (Receiver/Slave)
+# Design Inspiration: Otto DIY Biped Robot
+
+import time
+import math
+import rc_module
+from bbl.servos import ServosController
+
+# ==========================================
+# 1. SERVO CONFIGURATION & CALIBRATION TRIMS
+# ==========================================
+# Servo channels mapped to physical ports (S1-S4)
+SERVO_L_ANKLE = 1  # PWM1
+SERVO_L_HIP   = 2  # PWM2
+SERVO_R_ANKLE = 3  # PWM3
+SERVO_R_HIP   = 4  # PWM4
+
+# Center trim offsets (in degrees) to calibrate physical assembly alignment.
+# Adjust these values if your robot doesn't stand perfectly straight at 90 degrees.
+TRIM_L_ANKLE = 0
+TRIM_L_HIP   = 0
+TRIM_R_ANKLE = 0
+TRIM_R_HIP   = 0
+
+# Direction multipliers: set to -1 to reverse rotation direction if servos are mounted backwards.
+DIR_L_ANKLE = 1
+DIR_L_HIP   = 1
+DIR_R_ANKLE = 1
+DIR_R_HIP   = 1
+
+# Mechanical limit boundaries (extracted from CUBY JSON configuration to protect servos)
+LIMIT_L_ANKLE = (40, 120)
+LIMIT_L_HIP   = (45, 135)
+LIMIT_R_ANKLE = (60, 140)
+LIMIT_R_HIP   = (45, 135)
+
+# ==========================================
+# 2. GAIT PARAMETERS (TUNE FOR SMOOTH WALKING)
+# ==========================================
+WALK_SPEED     = 8.0   # Gait speed multiplier (higher = faster steps)
+ANKLE_AMP      = 20.0  # Weight-shifting tilt amplitude (degrees)
+HIP_AMP        = 25.0  # Leg-swinging forward/back amplitude (degrees)
+TURN_HIP_AMP   = 20.0  # Leg swing amplitude during turns
+TURN_ANKLE_AMP = 15.0  # Ankle tilt amplitude during turns
+
+# ==========================================
+# 3. JOYSTICK CHANNELS & CALIBRATION
+# ==========================================
+# Array index mappings from rc_slave_data() [L1, L2, L3, R1, R2, R3, K1, K2, K3, K4]
+CH_L_STICK_X = 1  # L2 analog
+CH_L_STICK_Y = 2  # L3 analog
+CH_R_STICK_X = 4  # R2 analog
+CH_R_STICK_Y = 5  # R3 analog
+
+JOY_MID      = 2048
+JOY_DEADZONE = 300
+
+# ==========================================
+# 4. INITIALIZATION
+# ==========================================
+print("Initializing CUBY Controller...")
+rc_module.rc_slave_init()
+servos = ServosController()
+
+# Tracks current phase of the walking gait (0 to 2*pi)
+gait_phase = 0.0
+
+def set_safe_angle(servo, angle, limits):
+    """Clamps target angle within mechanical limits and sends to Servo Controller."""
+    clamped = max(limits[0], min(limits[1], angle))
+    servos.set_angle(servo, clamped)
+
+def stand_neutral():
+    """Sets all servos to their neutral standing position."""
+    set_safe_angle(SERVO_L_ANKLE, 90 + TRIM_L_ANKLE, LIMIT_L_ANKLE)
+    set_safe_angle(SERVO_L_HIP,   90 + TRIM_L_HIP,   LIMIT_L_HIP)
+    set_safe_angle(SERVO_R_ANKLE, 90 + TRIM_R_ANKLE, LIMIT_R_ANKLE)
+    set_safe_angle(SERVO_R_HIP,   90 + TRIM_R_HIP,   LIMIT_R_HIP)
+
+stand_neutral()
+print("CUBY Ready and Listening for Remote Control...")
+
+last_time = time.ticks_ms()
+
+# ==========================================
+# 5. MAIN LOOP
+# ==========================================
+while True:
+    # Read analog control values from paired transmitter
+    data = rc_module.rc_slave_data()
+    
+    if data is None:
+        # No remote connection; enter safe standing pose
+        stand_neutral()
+        time.sleep(0.1)
+        continue
+
+    # Read joystick inputs
+    ly = data[CH_L_STICK_Y]  # Left stick vertical: walk forward/back
+    lx = data[CH_L_STICK_X]  # Left stick horizontal: roll/tilt pose
+    rx = data[CH_R_STICK_X]  # Right stick horizontal: turn left/right
+    ry = data[CH_R_STICK_Y]  # Right stick vertical: pitch/bow pose
+
+    # Calculate time delta for smooth, non-blocking time-based animations
+    current_time = time.ticks_ms()
+    dt = time.ticks_diff(current_time, last_time) / 1000.0
+    last_time = current_time
+
+    # Determine command states based on deadzones
+    is_walking_forward  = (ly > JOY_MID + JOY_DEADZONE)
+    is_walking_backward = (ly < JOY_MID - JOY_DEADZONE)
+    is_turning_right    = (rx > JOY_MID + JOY_DEADZONE)
+    is_turning_left     = (rx < JOY_MID - JOY_DEADZONE)
+
+    # ------------------------------------------
+    # ACTIVE LOCOMOTION STATE MACHINE
+    # ------------------------------------------
+    if is_walking_forward or is_walking_backward or is_turning_left or is_turning_right:
+        # Increment phase based on time delta
+        gait_phase += dt * WALK_SPEED
+        if gait_phase > 2 * math.pi:
+            gait_phase -= 2 * math.pi
+
+        # Direction of phase progression determines forward vs backward
+        p = gait_phase if (is_walking_forward or is_turning_right or is_turning_left) else -gait_phase
+
+        if is_walking_forward or is_walking_backward:
+            # --- Standard Forward/Backward Walking Gait ---
+            # Ankles shift weight side to side in phase
+            l_ankle_target = 90 + TRIM_L_ANKLE + DIR_L_ANKLE * (ANKLE_AMP * math.sin(p))
+            r_ankle_target = 90 + TRIM_R_ANKLE + DIR_R_ANKLE * (ANKLE_AMP * math.sin(p))
+
+            # Hips swing opposite each other to propel the robot forward/back
+            l_hip_target   = 90 + TRIM_L_HIP   + DIR_L_HIP   * (HIP_AMP * math.cos(p))
+            r_hip_target   = 90 + TRIM_R_HIP   - DIR_R_HIP   * (HIP_AMP * math.cos(p))
+
+        elif is_turning_right:
+            # --- Turn Right Gait (In-Place Rotate) ---
+            l_ankle_target = 90 + TRIM_L_ANKLE + DIR_L_ANKLE * (TURN_ANKLE_AMP * math.sin(p))
+            r_ankle_target = 90 + TRIM_R_ANKLE + DIR_R_ANKLE * (TURN_ANKLE_AMP * math.sin(p))
+            # Hips swing in-phase to pivot the body clockwise
+            l_hip_target   = 90 + TRIM_L_HIP   + DIR_L_HIP   * (TURN_HIP_AMP * math.cos(p))
+            r_hip_target   = 90 + TRIM_R_HIP   + DIR_R_HIP   * (TURN_HIP_AMP * math.cos(p))
+
+        elif is_turning_left:
+            # --- Turn Left Gait (In-Place Rotate) ---
+            l_ankle_target = 90 + TRIM_L_ANKLE + DIR_L_ANKLE * (TURN_ANKLE_AMP * math.sin(p))
+            r_ankle_target = 90 + TRIM_R_ANKLE + DIR_R_ANKLE * (TURN_ANKLE_AMP * math.sin(p))
+            # Hips swing in-phase opposite to turn counter-clockwise
+            l_hip_target   = 90 + TRIM_L_HIP   - DIR_L_HIP   * (TURN_HIP_AMP * math.cos(p))
+            r_hip_target   = 90 + TRIM_R_HIP   - DIR_R_HIP   * (TURN_HIP_AMP * math.cos(p))
+
+        # Output the calculated angles
+        set_safe_angle(SERVO_L_ANKLE, l_ankle_target, LIMIT_L_ANKLE)
+        set_safe_angle(SERVO_L_HIP,   l_hip_target,   LIMIT_L_HIP)
+        set_safe_angle(SERVO_R_ANKLE, r_ankle_target, LIMIT_R_ANKLE)
+        set_safe_angle(SERVO_R_HIP,   r_hip_target,   LIMIT_R_HIP)
+
+    else:
+        # ------------------------------------------
+        # IDLE & POSE STATE MACHINE
+        # ------------------------------------------
+        # Reset gait phase when walking stops to ensure we start from a clean stance
+        gait_phase = 0.0
+
+        # Check for non-walking inputs to trigger fun poses
+        is_leaning_right = (lx > JOY_MID + JOY_DEADZONE)
+        is_leaning_left  = (lx < JOY_MID - JOY_DEADZONE)
+        is_pitching_up   = (ry > JOY_MID + JOY_DEADZONE)
+        is_pitching_down = (ry < JOY_MID - JOY_DEADZONE)
+
+        # Base angles default to center standing pose
+        l_ankle_target = 90 + TRIM_L_ANKLE
+        r_ankle_target = 90 + TRIM_R_ANKLE
+        l_hip_target   = 90 + TRIM_L_HIP
+        r_hip_target   = 90 + TRIM_R_HIP
+
+        if is_leaning_right:
+            # Tilt body to the right
+            l_ankle_target += 25 * DIR_L_ANKLE
+            r_ankle_target += 25 * DIR_R_ANKLE
+        elif is_leaning_left:
+            # Tilt body to the left
+            l_ankle_target -= 25 * DIR_L_ANKLE
+            r_ankle_target -= 25 * DIR_R_ANKLE
+
+        if is_pitching_up:
+            # Stand tall / Lean back pose
+            l_hip_target   += 20 * DIR_L_HIP
+            r_hip_target   -= 20 * DIR_R_HIP
+        elif is_pitching_down:
+            # Bow / Lean forward pose
+            l_hip_target   -= 20 * DIR_L_HIP
+            r_hip_target   += 20 * DIR_R_HIP
+
+        # Apply target angles
+        set_safe_angle(SERVO_L_ANKLE, l_ankle_target, LIMIT_L_ANKLE)
+        set_safe_angle(SERVO_L_HIP,   l_hip_target,   LIMIT_L_HIP)
+        set_safe_angle(SERVO_R_ANKLE, r_ankle_target, LIMIT_R_ANKLE)
+        set_safe_angle(SERVO_R_HIP,   r_hip_target,   LIMIT_R_HIP)
+
+    # Allow servos controller to update stepping motion if active
+    if hasattr(servos, 'timing_proc'):
+        servos.timing_proc()
+
+    # Small delay to keep the control loop stable
+    time.sleep(0.01)
