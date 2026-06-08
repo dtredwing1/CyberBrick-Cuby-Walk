@@ -1,7 +1,13 @@
 import json
 
-# Walking code with perfectly mapped empirical kinematics
+# Walking code with perfectly mapped empirical kinematics and Self-Healing crash protection
 walking_code = """import time,math,rc_module
+
+# Self-Healing deduplication: Generate a unique ID for this run
+my_id = time.ticks_ms()
+# Store it in the global namespace. Any older running instances will see this new ID and self-destruct!
+globals()['cuby_instance'] = my_id
+
 from bbl.servos import ServosController
 s=ServosController()
 rc_module.rc_slave_init()
@@ -22,6 +28,10 @@ def stand():
  set_a(R_H,90+T_RH)
 stand()
 while True:
+ # If a newer instance of the script was launched by the button, cleanly terminate this older instance!
+ if globals().get('cuby_instance') != my_id:
+  break
+  
  d=rc_module.rc_slave_data()
  if d is None:
   stand()
@@ -74,30 +84,19 @@ for channel in data['sender']['channels']:
         channel['controls'] = []
     
     if channel.get('name') == 'L Shoulder Button':
-        # Purely LED cycling
+        # The L Shoulder Button now safely triggers the code to wake the robot AND cycles the LEDs
         channel['event'] = [
             {
                 "actuator": "LED1",
                 "receiver": 1,
                 "set_value": [1, 3, 4, 5, 2],
                 "type": "down"
-            }
-        ]
-        
-    if channel.get('name') == 'L Shoulder 3-Pos':
-        # Dedicated engine start/stop switch
-        channel['event'] = [
-            {
-                "actuator": "CODE",
-                "receiver": 1,
-                "set_value": [1], # Start Code
-                "type": "gt_mid"
             },
             {
                 "actuator": "CODE",
                 "receiver": 1,
-                "set_value": [0], # Stop Code
-                "type": "lt_mid"
+                "set_value": [1], # Trigger Code
+                "type": "down"
             }
         ]
 
@@ -110,12 +109,14 @@ data['receiver_1']['CODE'] = {
         }
     ],
     "en": True,
-    "name": "CODE"
+    "name": "CODE",
+    "initial_value": 1 # Experimental: Force Auto-Boot on hardware initialization
 }
 
-data['config_name'] = "CUBY_V1.4_Walk"
+data['config_name'] = "CUBY_V1.5_Walk"
 
 with open('c:/Users/mott_/OneDrive/Documents/CyberBrick/Cuby/CUBY_walk_turn.json', 'w') as f:
     json.dump(data, f, separators=(',', ':'))
 
-print("Generated CUBY_walk_turn.json with 3-Pos switch mapping!")
+print("Generated CUBY_walk_turn.json with Auto-Boot and Self-Healing logic!")
+
