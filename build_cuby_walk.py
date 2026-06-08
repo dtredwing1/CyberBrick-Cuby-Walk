@@ -104,10 +104,11 @@ with open('c:/Users/mott_/OneDrive/Documents/CyberBrick/Cuby/CUBY_baseline.json'
 data['receiver_1']['LED1'] = {"data": [], "en": False, "name": "LED1"}
 data['receiver_1']['LED2'] = {"data": [], "en": False, "name": "LED2"}
 
-# Disable native PWM servo channels to stop firmware from fighting Timer for servo control
-# Our ServosController talks to the PCA9685 directly over I2C — it doesn't need these.
+# Disable native PWM servo channels to stop firmware from fighting Timer for servo control.
+# Keep full schema intact (firmware requires it for import) but set en=false.
 for pwm in ['PWM1', 'PWM2', 'PWM3', 'PWM4']:
-    data['receiver_1'][pwm] = {"en": False, "name": pwm}
+    if pwm in data['receiver_1'] and isinstance(data['receiver_1'][pwm], dict):
+        data['receiver_1'][pwm]['en'] = False
 
 for channel in data['sender']['channels']:
     # Clear joystick controls (we read them via rc_slave_data instead)
