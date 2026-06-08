@@ -1,14 +1,17 @@
 import json
 
-# Walking code with perfectly mapped empirical kinematics and Singleton Engine Protection
-walking_code = """import time, math, rc_module
+# Walking code with perfectly mapped empirical kinematics and sys.modules Singleton Engine Protection
+walking_code = """import sys
 
-# Singleton Engine Pattern: Prevent multiple threads from crashing the hardware
-# We attach a flag to the rc_module itself because modules are shared singletons in MicroPython!
-if not hasattr(rc_module, 'cuby_running'):
- rc_module.cuby_running = True
+# Ultimate Singleton Engine Pattern: 
+# We inject a dummy flag into sys.modules. This is held in RAM (wiped on power off) 
+# and globally shared across all script executions on the chip.
+if 'cuby_flag' not in sys.modules:
+ sys.modules['cuby_flag'] = True
  
+ import time, math, rc_module
  from bbl.servos import ServosController
+ 
  s=ServosController()
  rc_module.rc_slave_init()
  L_A,L_H,R_A,R_H=1,2,3,4
@@ -112,11 +115,11 @@ data['receiver_1']['CODE'] = {
     "name": "CODE"
 }
 
-data['config_name'] = "CUBY_V1.6_Walk"
+data['config_name'] = "CUBY_V1.7_Walk"
 
 with open('c:/Users/mott_/OneDrive/Documents/CyberBrick/Cuby/CUBY_walk_turn.json', 'w') as f:
     json.dump(data, f, separators=(',', ':'))
 
-print("Generated CUBY_walk_turn.json with Singleton Engine Protection!")
+print("Generated CUBY_walk_turn.json with Ultimate Sys.Modules Engine Protection!")
 
 
