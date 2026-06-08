@@ -1,12 +1,10 @@
 import json
 
 # ==========================================
-# V1.13: THE CLAW MACHINE ARCHITECTURE
+# V1.14: THE CLAW MACHINE ARCHITECTURE (Fixed)
 # ==========================================
-# One button press launches a background Hardware Timer.
-# The Timer has TOTAL MONOPOLY over I2C: it handles servos AND LEDs.
-# The Timer polls rc_slave_data() for joystick AND button state.
-# No native LED1 actuator is mapped, so the firmware never touches I2C.
+# Fix 1: Disable native PWM1-4 so firmware stops fighting Timer for servos
+# Fix 2: Control BOTH LED1 and LED2 (one per eye)
 # ==========================================
 
 walking_code = """import time, math, rc_module
@@ -17,14 +15,16 @@ from machine import Timer
 if not hasattr(ServosController, 'cuby_engine'):
  ServosController.cuby_engine = True
  ServosController.s = ServosController()
- ServosController.lc = LEDController("LED1")
+ ServosController.lc1 = LEDController("LED1")
+ ServosController.lc2 = LEDController("LED2")
  rc_module.rc_slave_init()
  ServosController.phase = 0.0
  ServosController.last_t = time.ticks_ms()
  ServosController.led_colors = [0x00FF00, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF]
  ServosController.led_idx = 0
  ServosController.last_btn = 0
- ServosController.lc.set_led_effect(0, 500, 255, 1, 0x00FF00)
+ ServosController.lc1.set_led_effect(0, 500, 255, 1, 0x00FF00)
+ ServosController.lc2.set_led_effect(0, 500, 255, 1, 0x00FF00)
  L_A,L_H,R_A,R_H=1,2,3,4
  T_LA,T_LH,T_RA,T_RH=0,0,0,0
  D_LA,D_LH,D_RA,D_RH=1,1,1,1
@@ -52,7 +52,9 @@ if not hasattr(ServosController, 'cuby_engine'):
    btn=d[6]
    if btn==0 and ServosController.last_btn==1:
     ServosController.led_idx=(ServosController.led_idx+1)%len(ServosController.led_colors)
-    ServosController.lc.set_led_effect(0,500,255,1,ServosController.led_colors[ServosController.led_idx])
+    c=ServosController.led_colors[ServosController.led_idx]
+    ServosController.lc1.set_led_effect(0,500,255,1,c)
+    ServosController.lc2.set_led_effect(0,500,255,1,c)
    ServosController.last_btn=btn
    ly,lx,rx,ry=d[2],d[1],d[4],d[5]
    cur_t=time.ticks_ms()
@@ -98,12 +100,14 @@ if not hasattr(ServosController, 'cuby_engine'):
 with open('c:/Users/mott_/OneDrive/Documents/CyberBrick/Cuby/CUBY_baseline.json', 'r') as f:
     data = json.load(f)
 
-# Strip native LED1 data from receiver to prevent firmware from touching I2C for LEDs
-data['receiver_1']['LED1'] = {
-    "data": [],
-    "en": False,
-    "name": "LED1"
-}
+# Strip native LED data from receiver to prevent firmware from touching I2C for LEDs
+data['receiver_1']['LED1'] = {"data": [], "en": False, "name": "LED1"}
+data['receiver_1']['LED2'] = {"data": [], "en": False, "name": "LED2"}
+
+# Disable native PWM servo channels to stop firmware from fighting Timer for servo control
+# Our ServosController talks to the PCA9685 directly over I2C — it doesn't need these.
+for pwm in ['PWM1', 'PWM2', 'PWM3', 'PWM4']:
+    data['receiver_1'][pwm] = {"en": False, "name": pwm}
 
 for channel in data['sender']['channels']:
     # Clear joystick controls (we read them via rc_slave_data instead)
@@ -145,12 +149,12 @@ data['receiver_1']['CODE'] = {
     "name": "CODE"
 }
 
-data['config_name'] = "CUBY_V1.13_ClawMachineArch"
+data['config_name'] = "CUBY_V1.14_ClawMachineFixed"
 
 with open('c:/Users/mott_/OneDrive/Documents/CyberBrick/Cuby/CUBY_walk_turn.json', 'w') as f:
     json.dump(data, f, separators=(',', ':'))
 
-print("Generated CUBY_walk_turn.json with V1.13 Claw Machine Architecture!")
+print("Generated CUBY_walk_turn.json with V1.14 Claw Machine Architecture (Fixed)!")
 
 
 
