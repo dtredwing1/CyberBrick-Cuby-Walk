@@ -10,18 +10,13 @@ import json
 
 walking_code = """import time, math, rc_module
 from bbl.servos import ServosController
-from bbl.buzzer import BuzzerController
 
-bz=BuzzerController('BUZZER1',freq=880,duty=512)
-bz.buzzer.freq(880)
-bz.buzzer.duty(512)
-time.sleep(0.15)
-bz.buzzer.duty(0)
-time.sleep(0.05)
-bz.buzzer.freq(1760)
-bz.buzzer.duty(512)
-time.sleep(0.15)
-bz.buzzer.duty(0)
+try:
+ from bbl.buzzer import BuzzerController
+ bz=BuzzerController('BUZZER1')
+ bz.play_tune("Beep:d=16,o=7,b=180:a,p,a",volume=80,block=False)
+except:
+ pass
 
 s=ServosController()
 rc_module.rc_slave_init()
